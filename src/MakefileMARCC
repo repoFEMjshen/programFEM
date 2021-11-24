@@ -1,0 +1,111 @@
+
+TARGET      = ./fem_uel
+
+CPP_SRC     = 
+C_SRC       = ./superlu_c2f_dwrap.c ./dcreate_dist_matrix.c
+F_SRC       = 
+# deniz Ti6242
+F90_SRC     = ./eig.f90 ../modules/strings.f90 ../modules/crystal_Titanium.f90 \
+              ../../HomogenizedModelTi/functions/fortran/stressAnalysis.f90 \
+              ./jacobian_fbar.f90 ./material_Ti6242.f90 ./umat_Ti6242.f90 ./fem_uel.f90
+MOD_SRC		= ../modules/meshtools_mod.f90 ../modules/grains_mod.f90 ./superlupara.f90 ./superlu_mod.f90 \
+			  ./taskTiming_mod.f90 ./options_mod.f90 ../modules/nodalRecovery_mod.f90 ../modules/fBarPatch_mod.f90
+RUNUMAT_SRC	= ./taskTiming_mod.f90 ./options_mod.f90 ../modules/strings.f90 ../modules/crystal_Titanium.f90 \
+			  ./material_Ti6242.f90 ./umat_Ti6242.f90 ./runUmat.f90 ./subrUmat.f90
+SRC         = ${CPP_SRC} ${C_SRC} ${MOD_SRC} ${F_SRC} ${F90_SRC}
+
+HEADER      = ./PARDIS.H
+
+OBJ         = ${CPP_SRC:.C=.o} ${C_SRC:.c=.o} ${MOD_SRC:.f90=.o} ${F_SRC:.f=.o} ${F90_SRC:.f90=.o}
+
+#--gcc
+#runUmat_FLAGS = -g -O0 -fbacktrace -fbounds-check -finit-real=nan -ffpe-trap=invalid,zero,overflow -Wuninitialized
+#DEBUG_FLAGS = -g -O0 -fbacktrace -gdwarf-2 -fbounds-check -finit-real=nan -ffpe-trap=invalid,zero,overflow -Wuninitialized
+#RELEASE_FLAGS = -O3
+#--intel fortran
+runUmat_FLAGS = -g -O0 -fbacktrace -fbounds-check -finit-real=nan -ffpe-trap=invalid,zero,overflow -Wuninitialized
+DEBUG_FLAGS = -g -O0 -debug inline-debug-info -check bounds -check uninit -ftrapuv -fpe-all=0 -debug extended -traceback
+RELEASE_FLAGS = -O3 -xHOST
+
+#--gcc
+#CC         = mpicc
+#F77        = mpif90
+#F90        = mpif90
+#--intel fortran
+CC         = mpiicc
+F77        = mpiifort
+F90        = mpiifort
+
+#--============================== SUPER LU -=====================================#
+#--(A) directly link to the library
+SUPERLU_LIBS=-L/scratch/groups/sghosh20/group/installations/SuperLU_DIST_4.1/lib -lsuperlu_dist_4.1
+SUPERLU_INC=-I/scratch/groups/sghosh20/group/installations/SuperLU_DIST_4.1/include
+#--(B) assuming modules were loaded:
+#SUPERLU_LIBS=-lsuperlu_dist_4.1
+#============================ BLAS and LAPACK ===================================#
+#--(A) use intel-MKL for blas+lapack (assuming env var has been set)
+#BLAS_LIBS=-L${MKL}
+BLAS_LIBS=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread
+#--(B) use gcc blas+lapack on the server
+#BLAS_LIBS=-llapack -lblas
+#============================ METIS and PARMETIS ================================#
+#--(A) use metis+parmetis, built with gcc-4.9.1 and OpenMPI-1.4.3 for 64bit integers and 64bit floats -- metis gives segfault
+#METIS_LIB=/data1/ghosh/installations/parmetis-4.0.3/build/Linux-x86_64/libmetis/libmetis.a
+#PARMETIS_LIB=/data1/ghosh/installations/parmetis-4.0.3/build/Linux-x86_64/libparmetis/libparmetis.a
+#--(B) use matis+parmetis installation at MARCC
+METIS_LIB=/scratch/groups/sghosh20/group/installations/parmetis/4.0.3/lib/libmetis.a
+PARMETIS_LIB=/scratch/groups/sghosh20/group/installations/parmetis/4.0.3/lib/libparmetis.a
+#--------------------------------------------------------------------------------#
+METISPARMETIS_LIBS=${PARMETIS_LIB} ${METIS_LIB}
+#================================================================================#
+
+#For IBM cluster - Intel compilers
+INCLUDES = ${SUPERLU_INC}
+#--- uncomment, if using parmetis+metis+superLU with 64-bit integers ------------#
+C_64 	 = -m64 -D_LONGINT 
+F_64 	 = -i8
+#--------------------------------------------------------------------------------#
+CFLAGS   = -mcmodel=medium ${C_64}
+FFLAGS	 = -mcmodel=medium -no-wrap-margin ${F_64}
+F90FLAGS = -mcmodel=medium -no-wrap-margin ${F_64}
+LIBS  = ${SUPERLU_LIBS} ${BLAS_LIBS} ${METISPARMETIS_LIBS}
+
+# DEFAULT:
+# adopt high-performance/release flags
+release: FFLAGS += ${RELEASE_FLAGS}
+release: F90FLAGS += ${RELEASE_FLAGS}
+release: ${TARGET}
+
+# adopt low-performance/debug flags
+debug: FFLAGS += ${DEBUG_FLAGS}
+debug: F90FLAGS += ${DEBUG_FLAGS}
+debug: ${TARGET}
+
+# linker
+${TARGET}: ${OBJ}
+	${F90} ${F90FLAGS} ${OBJ} ${LIBS} -o ${TARGET}
+
+# recompile object files if header file changes
+${OBJ}: ${HEADER}
+
+runUmat: ${RUNUMAT_SRC:.f90=.o}
+	gfortran ${RUNUMAT_SRC} ${BLAS_LIBS} ${F90FLAGS} ${DEBUG_FLAGS} -fno-align-commons -o runUmat
+clean:
+	rm -f ${OBJ}
+	rm *.mod
+tfile:
+	cat ${SRC} ${HEADER} > d.d
+	
+%.o: %.mod
+	
+.SUFFIXES: .C .c .f .f90 .o
+
+# rules for compiling source files into object files
+.C.o:  
+	${CC} ${CFLAGS} -c $<
+.c.o:  
+	${CC} ${INCLUDES} ${CFLAGS} -c $< -o $@
+.f.o:
+	${F77} ${INCLUDES} ${FFLAGS} -c $< -o $@
+.f90.o:
+	${F90} ${INCLUDES} ${F90FLAGS} -c $< -o $@
