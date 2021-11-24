@@ -1,1 +1,2 @@
-This repository is to have the FEM code with large deformation
+This repository is for the FEM simulation of nonlinear material with large deformation
+It's mainly coded in Fortran 90.
